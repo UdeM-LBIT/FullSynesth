@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import sys
+from syntesim.simulator import State
+from typing import Optional, TextIO
+from types import TracebackType
+from syntesim.history import build_history, Graph, SpeciesGraph, SyntenyGraph
+from syntesim.model import Gene, IdGenerator, Species, Synteny
+from sowing.traversal import depth
+from sowing.repr import newick
+from sowing import traversal
+import json
+import dataclasses
+
+def print_forest_ete(graph: Graph, kind, output )->None:
+
+    if kind == "species":
+        final_leaves = getFinalSpecies()
+        tree = graph.get_final_tree(final_leaves)
+        
+        if output == "tree":
+            print(tree.pop())
+        elif output == "data":
+            return newick.write(tree.pop())
+
+
+    elif kind == "synteny":
+        final_leaves = getFinalSyntenies()
+        tree = graph.get_final_tree(final_leaves)
+        
+        if output == "tree":
+            print(tree.pop())
+        elif output == "data":
+            return newick.write(tree.pop())
+
+
+    elif kind == "gene":
+        forest = graph.to_forest()
+         
+        if output == "tree":
+            for tree in graph.to_forest():
+                print(tree)
+        elif output == "data":
+            return forest
+def get_tree(graph: Graph):
+
+    tree = graph.to_forest()
+    return newick.write(tree.pop())
+
+
+
+def allTree():
+    print_forest_ete(spe_forest,"species", "tree")
+    print_forest_ete(synt_forest,"synteny", "tree")
+    print_forest_ete(gene_forest,"gene", "tree")
+
+def get_gene_families():
+    forest = print_forest_ete(gene_forest,"gene","data")
+    gene_families = dict()
+    for tree in forest:
+        for cursor in depth(tree):
+            gene_families[cursor.node.data["name"]] = tree.data["name"]
+   
+    return gene_families
+
+def leafData(state):
+    
+    leaf_object_species = {}
+    leaf_syntenies = {}
+    gene_families = get_gene_families()
+
+    for speName, spe in state.species.items():
+
+        for synName, syn in spe.syntenies.items():
+            leaf_object_species.update({synName:speName})
+            gene_list = set()
+
+            for gene in syn.genes:
+                gene_list.add(gene_families[gene.id])
+            
+            gene_list = list(gene_list)
+
+            leaf_syntenies.update({synName:gene_list})
+
+    return leaf_object_species, leaf_syntenies
+        
+def getFinalSpecies():
+    global final_state
+    final_species = set()
+
+    for spe in final_state.species:
+        final_species.add(spe)
+
+    return final_species
+
+def getFinalSyntenies():
+    global final_state
+    final_syntenies = set()
+
+    for spe in final_state.species.values():
+        for syn in spe.syntenies:
+            final_syntenies.add(syn)
+
+    return final_syntenies
+
+def makeJSON(filename)-> None:
+
+    global final_state
+    species = print_forest_ete(spe_forest,"species","data")
+    synteny = print_forest_ete(synt_forest,"synteny","data")
+    leafObjectSpecies, leafSyntenies = leafData(final_state)
+
+    # Data to be written
+    dictionary = {
+	    "object_tree": synteny,
+	    "species_tree": species,
+	    "leaf_object_species": leafObjectSpecies,
+	    "leaf_syntenies": leafSyntenies
+    }
+
+    # Serializing json
+    json_object = json.dumps(dictionary, indent=4)
+
+    print(json_object)
+
+
+def makeJSON_history(event_tree):
+    species = get_tree(spe_forest)
+    synteny = get_tree(synt_forest)
+    leafObjectSpecies, leafSyntenies = leafData(final_state)
+    gene_families = get_gene_families()
+    
+    for synt ,genes in syntenies_hist.items() :
+        gene_list = set()
+        for gene in genes:
+            gene_list.add(gene_families[gene])
+        syntenies_hist[synt] = list(gene_list)
+    
+    def replaceContent(event, edges, _, depth):
+        gene_ancestor = set()
+        for gene in event.contents:
+            print(gene)
+            gene_ancestor.add(gene_families[gene])
+        print(gene_ancestor)
+        event = dataclasses.replace(event, contents=frozenset(gene_ancestor))
+        return event, edges
+    event_tree = traversal.map(replaceContent, depth(event_tree))
+
+
+
+  
+    # Data to be written
+    dictionary = {
+        "input": { 
+                    "leaf_object_species": leafObjectSpecies,
+	                "leaf_syntenies": leafSyntenies, 
+                    "object_tree": synteny,
+	                "species_tree": species,
+                  },
+	    "object_tree": synteny,
+	    "species_tree": species,
+	   
+        "object_species": obj_spe_hist,
+        "syntenies":syntenies_hist,
+
+    }
+
+    # Serializing json
+    json_object = json.dumps(dictionary, indent=4)
+
+    return event_tree
+
+
+input = open("Simulation.json")
+input2 = open("Trees.json","w")
+input3 = open("Species.json","w")
+
+kind = sys.argv[1] if len(sys.argv) >= 2 else None
+spe_forest, synt_forest, gene_forest, final_state, obj_spe_hist, syntenies_hist = build_history(input)
+
+input.close()
+
+if kind == "species":
+    print(print_forest_ete(spe_forest,kind,"data"), file=input3)
+
+elif kind == "synteny": 
+    print(print_forest_ete(synt_forest,kind,"data"))
+
+elif kind == "gene":
+    for tree in print_forest_ete(gene_forest,kind,"data"):
+        print(newick.write(tree), file=input2)
+        #print(newick.write(tree)) 
+
+elif kind == "geneAndSpecies":
+    for tree in print_forest_ete(gene_forest,"gene","data"):
+        print(newick.write(tree), file=input2)
+        #print(newick.write(tree)) 
+    print(print_forest_ete(spe_forest,"species","data"), file=input3)      
+
+elif kind == "all":
+    allTree()
+
+elif kind == "data":
+    makeJSON("simulation")
+
+elif kind == "history":
+    print(makeJSON_history(event_tree))
+
+else:
+    print("Unknown tree kind")
+    sys.exit(1)
+
+Species.__dataclass_fields__["id"].default_factory.reset()
+Gene.__dataclass_fields__["id"].default_factory.reset()
+Synteny.__dataclass_fields__["id"].default_factory.reset()
+
+input2.close()
+input3.close()
+

@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+import sys
+from typing import Optional, TextIO
+from types import TracebackType
+from syntesim.history import build_history, Graph, SpeciesGraph, SyntenyGraph
+
+
+class Printer:
+    def __init__(self, outfile: TextIO):
+        self.outfile = outfile
+        self.depth = 0
+
+    def start(self, header: str, comment: str = "") -> Printer:
+        if header:
+            header = header + " "
+
+        if comment:
+            comment = " // " + comment
+
+        self(header + "{" + comment)
+        self.depth += 1
+        return self
+
+    def __enter__(self) -> Printer:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType]
+    ) -> None:
+        self.end()
+
+    def end(self) -> Printer:
+        self.depth -= 1
+        self("}")
+        return self
+
+    def __call__(self, data: str) -> Printer:
+        print("  " * self.depth + data, file=self.outfile)
+        return self
+
+
+def print_graph(printer: Printer, graph: Graph) -> None:
+    for node in graph.nodes:
+        printer(f"{node};")
+
+    for origin, end in graph.edges:
+        printer(f"{origin} -> {end};")
+
+
+def print_species_graph(printer: Printer, graph: SpeciesGraph) -> None:
+    with printer.start("digraph"):
+        with printer.start("", "leaves"):
+            printer("rank=same;")
+
+            with printer.start("", "remaining leaves"):
+                printer("node [shape=none];")
+                extants = graph.nodes - graph.speciations - graph.losses
+
+                for extant in extants:
+                    printer(f"{extant};")
+
+            with printer.start("", "extinct leaves"):
+                printer("node [shape=none, fontcolor=red];")
+
+                for extinct in graph.losses:
+                    printer(f"{extinct};")
+
+        with printer.start("", "speciations"):
+            printer("node [shape=ellipse];")
+
+            for speciation in graph.speciations:
+                printer(f"{speciation};")
+
+        print_graph(printer, graph)
+
+
+def print_synteny_graph(printer: Printer, graph: SyntenyGraph) -> None:
+    with printer.start("digraph"):
+        with printer.start("", "leaves"):
+            printer("rank=same;")
+
+            with printer.start("", "remaining leaves"):
+                printer("node [shape=none];")
+
+                extants = (
+                    graph.nodes - graph.speciations - graph.losses
+                    - graph.duplications - graph.transfers - graph.cuts
+                    - graph.joins
+                )
+
+                for extant in extants:
+                    printer(f"{extant};")
+
+            with printer.start("", "lost leaves"):
+                printer("node [shape=none, fontcolor=red];")
+
+                for lost in graph.losses:
+                    printer(f"{lost};")
+
+        with printer.start("", "speciations"):
+            printer("node [shape=ellipse];")
+
+            for speciation in graph.speciations:
+                printer(f"{speciation};")
+
+        with printer.start("", "duplications"):
+            printer("node [shape=box];")
+
+            for duplication in graph.duplications:
+                printer(f"{duplication};")
+
+        with printer.start("", "transfers"):
+            printer("node [shape=diamond];")
+
+            for transfer in graph.transfers:
+                printer(f"{transfer};")
+
+        with printer.start("", "cuts"):
+            printer("node [shape=trapezium];")
+
+            for cut in graph.cuts:
+                printer(f"{cut};")
+
+        with printer.start("", "joins"):
+            printer("node [shape=invtrapezium];")
+
+            for join in graph.joins:
+                printer(f"{join};")
+
+        print_graph(printer, graph)
+
+
+def print_gene_graph(printer: Printer, graph: GeneGraph) -> None:
+    with printer.start("digraph"):
+        with printer.start("", "leaves"):
+            printer("rank=same;")
+
+            with printer.start("", "remaining leaves"):
+                printer("node [shape=none];")
+
+                extants = (
+                    graph.nodes - graph.speciations - graph.losses
+                    - graph.duplications - graph.transfers
+                )
+
+                for extant in extants:
+                    printer(f"{extant};")
+
+            with printer.start("", "lost leaves"):
+                printer("node [shape=none, fontcolor=red];")
+
+                for lost in graph.losses:
+                    printer(f"{lost};")
+
+        with printer.start("", "speciations"):
+            printer("node [shape=ellipse];")
+
+            for speciation in graph.speciations:
+                printer(f"{speciation};")
+
+        with printer.start("", "duplications"):
+            printer("node [shape=box];")
+
+            for duplication in graph.duplications:
+                printer(f"{duplication};")
+
+        with printer.start("", "transfers"):
+            printer("node [shape=diamond];")
+
+            for transfer in graph.transfers:
+                printer(f"{transfer};")
+
+        print_graph(printer, graph)
+
+
+kind = sys.argv[1] if len(sys.argv) >= 2 else None
+spe_graph, synt_graph, gene_graph = build_history(sys.stdin)[:3]
+printer = Printer(sys.stdout)
+
+if kind == "species":
+    print_species_graph(printer, spe_graph)
+elif kind == "synteny":
+    print_synteny_graph(printer, synt_graph)
+elif kind == "gene":
+    print_gene_graph(printer, gene_graph)
+else:
+    print("Unknown tree kind")
+    sys.exit(1)
